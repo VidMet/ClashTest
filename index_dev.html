@@ -2,7 +2,7 @@
 <html lang="nb">
 <head>
   <meta charset="UTF-8"/>
-  <title>Kollisjonskontroll v1.0 Beta b</title>
+  <title>Kollisjonskontroll v1.0 Beta c</title>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   
   <script src="https://components.connect.trimble.com/trimble-connect-workspace-api/index.js"></script>
@@ -61,7 +61,7 @@
 
 <header>
   <div class="header-info">
-    <h1>Kollisjonskontroll <span class="version">v1.0 Beta b</span></h1>
+    <h1>Kollisjonskontroll <span class="version">v1.0 Beta c</span></h1>
     <p>Avansert kontroll via ekstern prosessering</p>
   </div>
   <div style="display: flex; align-items: center; gap: 10px;">
@@ -162,12 +162,11 @@ async function hentEgenskaper() {
     modelProperties = {};
     let objectIds = [];
 
-    // 1. Samle inn alle objekt-ID-er på en robust måte
+    // 1. Samle inn alle objekt-ID-er
     models.forEach(m => {
-        const mId = m.modelId || m.modelid || m.id; // Garderer mot ulike versjoner av API-et
+        const mId = m.modelId || m.modelid || m.id;
         if (m.objects && m.objects.length > 0) {
             m.objects.forEach(obj => {
-                // Vi sender inn runtimeId, da dette er mest effektivt for Viewer API
                 objectIds.push({ modelId: mId, runtimeId: obj.runtimeId });
             });
         }
@@ -177,41 +176,49 @@ async function hentEgenskaper() {
         throw new Error("Modellene inneholder ingen synlige objekter.");
     }
 
-    // 2. Del opp hentingen i "chunks" på 500 objekter for ikke å krasje nettleseren
+    // 2. Del opp hentingen i "chunks" på 500 objekter
     const chunkSize = 500; 
     for (let i = 0; i < objectIds.length; i += chunkSize) {
         const chunk = objectIds.slice(i, i + chunkSize);
         
-        // Hent data for denne porsjonen
+        // Hent data for denne porsjonen fra Trimble Connect
         const props = await API.viewer.getObjectProperties(chunk);
         
-        if (props && props.length > 0) {
-            props.forEach(objProp => {
-                if (objProp.properties && Array.isArray(objProp.properties)) {
-                    objProp.properties.forEach(pSet => {
-                        // Sjekker om det er et property set
-                        if (pSet.properties && Array.isArray(pSet.properties)) {
-                            pSet.properties.forEach(p => {
-                                const val = p.value;
-                                if (val !== undefined && val !== null && val !== "") {
-                                    if (!modelProperties[p.name]) modelProperties[p.name] = new Set();
-                                    modelProperties[p.name].add(val);
-                                }
-                            });
-                        } else {
-                            // Fallback for flate egenskaper
-                            const val = pSet.value;
-                            if (val !== undefined && val !== null && val !== "") {
-                                if (!modelProperties[pSet.name]) modelProperties[pSet.name] = new Set();
-                                modelProperties[pSet.name].add(val);
-                            }
-                        }
-                    });
+        // REKURSIV SØKEFUNKSJON: Graver gjennom all data og finner alt av egenskaper
+        function gravEtterEgenskaper(node) {
+            if (!node || typeof node !== 'object') return;
+            
+            // Hvis vi finner et objekt som inneholder 'name' og 'value', lagrer vi det!
+            if (node.hasOwnProperty('name') && node.hasOwnProperty('value')) {
+                const val = node.value;
+                if (val !== undefined && val !== null && val !== "") {
+                    // Konverterer til tekststreng for å unngå trøbbel med tallverdier (f.eks mengder)
+                    const valStr = String(val);
+                    if (!modelProperties[node.name]) {
+                        modelProperties[node.name] = new Set();
+                    }
+                    modelProperties[node.name].add(valStr);
                 }
+            }
+            
+            // Fortsett å grave dypere i alle under-mapper og lister
+            for (let key in node) {
+                if (typeof node[key] === 'object') {
+                    gravEtterEgenskaper(node[key]);
+                }
+            }
+        }
+        
+        if (props && props.length > 0) {
+            // Skriv ut den aller første "bolken" i konsollen (F12) slik at vi kan feilsøke ved behov
+            if (i === 0) console.log("Første objekt fra API (for feilsøking):", props[0]); 
+            
+            props.forEach(objProp => {
+                gravEtterEgenskaper(objProp);
             });
         }
         
-        // Oppdater statusbaren med fremdriften
+        // Oppdater statusbaren
         const progress = Math.min(i + chunkSize, objectIds.length);
         setStatus(`⏳ Leser egenskaper: ${progress} av ${objectIds.length} objekter analysert...`);
     }
@@ -224,7 +231,7 @@ async function hentEgenskaper() {
     if (funnetAntall > 0) {
         setStatus(`✅ Skann ferdig. Fant ${funnetAntall} unike egenskapsnavn.`);
     } else {
-        setStatus('⚠️ Skann ferdig, men fant ingen egenskaper (modelProperties er tom).');
+        setStatus('⚠️ Skann ferdig, men fant ingen egenskaper (Sjekk F12/Konsoll for å se rådata).');
     }
 
   } catch (e) {
