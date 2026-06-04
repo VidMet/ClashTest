@@ -2,7 +2,7 @@
 <html lang="nb">
 <head>
   <meta charset="UTF-8"/>
-  <title>Kollisjonskontroll v1.0 Beta 1</title>
+  <title>Kollisjonskontroll v1.0 Beta b</title>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   
   <script src="https://components.connect.trimble.com/trimble-connect-workspace-api/index.js"></script>
@@ -61,7 +61,7 @@
 
 <header>
   <div class="header-info">
-    <h1>Kollisjonskontroll <span class="version">v1.0 Beta 1</span></h1>
+    <h1>Kollisjonskontroll <span class="version">v1.0 Beta b</span></h1>
     <p>Avansert kontroll via ekstern prosessering</p>
   </div>
   <div style="display: flex; align-items: center; gap: 10px;">
@@ -166,27 +166,49 @@ async function hentEgenskaper() {
     models.forEach(model => {
         if (model.objects) {
             model.objects.forEach(obj => {
-                objectIds.push({ modelId: model.modelId, objectId: obj.id });
+                // Sender med både id og runtimeId for maksimal kompatibilitet med APIet
+                objectIds.push({ modelId: model.modelId, objectId: obj.id, runtimeId: obj.runtimeId });
             });
         }
     });
 
     // Hent alle egenskaper for de innsamlede objektene
     const props = await API.viewer.getObjectProperties(objectIds);
+    if (!props || props.length === 0) {
+      throw new Error("Klarte ikke hente egenskaper. Listen med data var tom.");
+    }
 
     // Sorter og lagre unike verdier
+    // OPPDATERING: Nå dykker vi ned i Property Sets (pSet) for å finne de faktiske egenskapene
     props.forEach(objProp => {
-        if (objProp.properties) {
-            objProp.properties.forEach(p => {
-                const propName = p.name;
-                const propValue = p.value;
+        if (objProp.properties && Array.isArray(objProp.properties)) {
+            objProp.properties.forEach(pSet => {
+                
+                // Sjekk om dette er et Property Set (inneholder en ny liste med egenskaper)
+                if (pSet.properties && Array.isArray(pSet.properties)) {
+                    pSet.properties.forEach(p => {
+                        const propName = p.name;
+                        const propValue = p.value;
 
-                // Ignorer tomme verdier
-                if (propValue !== undefined && propValue !== null && propValue !== "") {
-                    if (!modelProperties[propName]) {
-                        modelProperties[propName] = new Set();
+                        // Ignorer tomme verdier
+                        if (propValue !== undefined && propValue !== null && propValue !== "") {
+                            if (!modelProperties[propName]) {
+                                modelProperties[propName] = new Set();
+                            }
+                            modelProperties[propName].add(propValue);
+                        }
+                    });
+                } else {
+                    // Fallback for flate egenskaper uten Property Set
+                    const propName = pSet.name;
+                    const propValue = pSet.value;
+
+                    if (propValue !== undefined && propValue !== null && propValue !== "") {
+                        if (!modelProperties[propName]) {
+                            modelProperties[propName] = new Set();
+                        }
+                        modelProperties[propName].add(propValue);
                     }
-                    modelProperties[propName].add(propValue);
                 }
             });
         }
@@ -195,7 +217,13 @@ async function hentEgenskaper() {
     byggDropdowns();
     
     btn.innerText = '🔍 Skann modell for egenskaper';
-    setStatus('✅ Egenskaper lastet og klare for filtrering.');
+    const funnetAntall = Object.keys(modelProperties).length;
+    
+    if (funnetAntall > 0) {
+        setStatus(`✅ Skann ferdig. Fant ${funnetAntall} unike egenskapsnavn.`);
+    } else {
+        setStatus('⚠️ Skann ferdig, men fant ingen egenskaper (modelProperties er tom).');
+    }
 
   } catch (e) {
     console.error(e);
