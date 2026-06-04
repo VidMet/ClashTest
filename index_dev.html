@@ -2,7 +2,7 @@
 <html lang="nb">
 <head>
   <meta charset="UTF-8"/>
-  <title>Kollisjonskontroll v1.0 Beta c</title>
+  <title>Kollisjonskontroll v1.0 Beta d</title>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   
   <script src="https://components.connect.trimble.com/trimble-connect-workspace-api/index.js"></script>
@@ -61,7 +61,7 @@
 
 <header>
   <div class="header-info">
-    <h1>Kollisjonskontroll <span class="version">v1.0 Beta c</span></h1>
+    <h1>Kollisjonskontroll <span class="version">v1.0 Beta d</span></h1>
     <p>Avansert kontroll via ekstern prosessering</p>
   </div>
   <div style="display: flex; align-items: center; gap: 10px;">
@@ -181,41 +181,40 @@ async function hentEgenskaper() {
     for (let i = 0; i < objectIds.length; i += chunkSize) {
         const chunk = objectIds.slice(i, i + chunkSize);
         
-        // Hent data for denne porsjonen fra Trimble Connect
-        const props = await API.viewer.getObjectProperties(chunk);
-        
-        // REKURSIV SØKEFUNKSJON: Graver gjennom all data og finner alt av egenskaper
-        function gravEtterEgenskaper(node) {
-            if (!node || typeof node !== 'object') return;
+        try {
+            // Hent data for denne porsjonen
+            const props = await API.viewer.getObjectProperties(chunk);
             
-            // Hvis vi finner et objekt som inneholder 'name' og 'value', lagrer vi det!
-            if (node.hasOwnProperty('name') && node.hasOwnProperty('value')) {
-                const val = node.value;
-                if (val !== undefined && val !== null && val !== "") {
-                    // Konverterer til tekststreng for å unngå trøbbel med tallverdier (f.eks mengder)
-                    const valStr = String(val);
-                    if (!modelProperties[node.name]) {
-                        modelProperties[node.name] = new Set();
+            // REKURSIV SØKEFUNKSJON
+            function gravEtterEgenskaper(node) {
+                if (!node || typeof node !== 'object') return;
+                
+                if (node.hasOwnProperty('name') && node.hasOwnProperty('value')) {
+                    const val = node.value;
+                    if (val !== undefined && val !== null && val !== "") {
+                        const valStr = String(val);
+                        if (!modelProperties[node.name]) {
+                            modelProperties[node.name] = new Set();
+                        }
+                        modelProperties[node.name].add(valStr);
                     }
-                    modelProperties[node.name].add(valStr);
+                }
+                
+                for (let key in node) {
+                    if (typeof node[key] === 'object') {
+                        gravEtterEgenskaper(node[key]);
+                    }
                 }
             }
             
-            // Fortsett å grave dypere i alle under-mapper og lister
-            for (let key in node) {
-                if (typeof node[key] === 'object') {
-                    gravEtterEgenskaper(node[key]);
-                }
+            if (props && props.length > 0) {
+                props.forEach(objProp => {
+                    gravEtterEgenskaper(objProp);
+                });
             }
-        }
-        
-        if (props && props.length > 0) {
-            // Skriv ut den aller første "bolken" i konsollen (F12) slik at vi kan feilsøke ved behov
-            if (i === 0) console.log("Første objekt fra API (for feilsøking):", props[0]); 
-            
-            props.forEach(objProp => {
-                gravEtterEgenskaper(objProp);
-            });
+        } catch (chunkError) {
+            // Her fanger vi opp 404-feilene! Skriptet krasjer ikke, men logger feilen og går videre til neste bolk.
+            console.warn(`⚠️ Hoppet over bolk ${i} til ${i + chunkSize} på grunn av serverfeil fra Trimble (sannsynligvis alignment-objekter).`);
         }
         
         // Oppdater statusbaren
