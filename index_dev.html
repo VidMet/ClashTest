@@ -131,6 +131,7 @@
 
 <script>
 let API = null;
+let modelProperties = {}; // Her lagrer vi egenskapene vi finner
 
 const $ = id => document.getElementById(id);
 const setStatus = m => { $('statusBar').textContent = m; };
@@ -144,12 +145,116 @@ async function init() {
   }
 }
 
-// Dummy-funksjon for å simulere skanning av modellen i neste steg
-function hentEgenskaper() {
-    setStatus('⏳ Skanner modell for egenskapsdata...');
-    setTimeout(() => {
-        setStatus('✅ Egenskaper lastet. Klar til å definere regelsett.');
-    }, 1500);
+async function hentEgenskaper() {
+  const btn = $('loadPropsBtn');
+  btn.innerText = '⏳ Skanner...';
+  setStatus('⏳ Skanner modell for egenskapsdata (Dette kan ta litt tid for store modeller)...');
+
+  try {
+    if (!API || !API.viewer) throw new Error("Trimble API ikke tilgjengelig");
+
+    // Hent alle objekter som er lastet inn i 3D-visningen
+    const models = await API.viewer.getObjects();
+    if (!models || models.length === 0) {
+      throw new Error("Fant ingen objekter i 3D-visningen.");
+    }
+
+    modelProperties = {};
+    let objectIds = [];
+
+    // Bygg en liste over alle objekt-IDer vi vil hente egenskaper for
+    models.forEach(model => {
+        if (model.objects) {
+            model.objects.forEach(obj => {
+                objectIds.push({ modelId: model.modelId, objectId: obj.id });
+            });
+        }
+    });
+
+    // Hent alle egenskaper for de innsamlede objektene
+    const props = await API.viewer.getObjectProperties(objectIds);
+
+    // Sorter og lagre unike verdier
+    props.forEach(objProp => {
+        if (objProp.properties) {
+            objProp.properties.forEach(p => {
+                const propName = p.name;
+                const propValue = p.value;
+
+                // Ignorer tomme verdier
+                if (propValue !== undefined && propValue !== null && propValue !== "") {
+                    if (!modelProperties[propName]) {
+                        modelProperties[propName] = new Set();
+                    }
+                    modelProperties[propName].add(propValue);
+                }
+            });
+        }
+    });
+
+    byggDropdowns();
+    
+    btn.innerText = '🔍 Skann modell for egenskaper';
+    setStatus('✅ Egenskaper lastet og klare for filtrering.');
+
+  } catch (e) {
+    console.error(e);
+    btn.innerText = '❌ Feil ved skann';
+    setStatus('❌ Kunne ikke hente egenskaper: ' + e.message);
+  }
+}
+
+function byggDropdowns() {
+  const keys = Object.keys(modelProperties).sort();
+  const optionsHTML = keys.map(k => `<option value="${k}">${k}</option>`).join('');
+
+  const keyA = $('propKeyA');
+  const keyB = $('propKeyB');
+
+  keyA.innerHTML = '<option value="">-- Velg egenskap --</option>' + optionsHTML;
+  keyB.innerHTML = '<option value="">-- Velg egenskap --</option>' + optionsHTML;
+
+  keyA.disabled = false;
+  keyB.disabled = false;
+
+  // Prioriter Objekttype automatisk da denne ofte er nøkkelen for filtrering
+  if (keys.includes('Objekttype')) {
+      keyA.value = 'Objekttype';
+      keyB.value = 'Objekttype';
+  }
+
+  oppdaterVerdiDropdown('A');
+  oppdaterVerdiDropdown('B');
+
+  // Legg til lyttere slik at verdi-menyen oppdateres når du bytter egenskap
+  keyA.onchange = () => oppdaterVerdiDropdown('A');
+  keyB.onchange = () => oppdaterVerdiDropdown('B');
+}
+
+function oppdaterVerdiDropdown(sett) {
+  const keySelect = $(`propKey${sett}`);
+  const valSelect = $(`propVal${sett}`);
+  const valgtKey = keySelect.value;
+
+  if (!valgtKey) {
+    valSelect.innerHTML = '<option value="">-- Vent på egenskap --</option>';
+    valSelect.disabled = true;
+    return;
+  }
+
+  // Konverter Set til Array, sorter alfabetisk, og bygg options
+  const values = Array.from(modelProperties[valgtKey]).sort();
+  valSelect.innerHTML = '<option value="">-- Velg verdi --</option>' + values.map(v => `<option value="${v}">${v}</option>`).join('');
+  valSelect.disabled = false;
+  
+  sjekkKlarForKollisjon();
+}
+
+function sjekkKlarForKollisjon() {
+    // Aktiver "Kjør Kollisjonskontroll"-knappen kun hvis alle fire felter er valgt
+    const valgtA = $('propValA').value;
+    const valgtB = $('propValB').value;
+    $('runClashBtn').disabled = !(valgtA && valgtB);
 }
 
 // Start API når siden lastes
