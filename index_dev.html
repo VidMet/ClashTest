@@ -148,7 +148,7 @@ async function init() {
 async function hentEgenskaper() {
   const btn = $('loadPropsBtn');
   btn.innerText = '⏳ Skanner...';
-  setStatus('⏳ Skanner modell for egenskapsdata (Dette kan ta litt tid for store modeller)...');
+  setStatus('⏳ Finner objekter i 3D-visningen...');
 
   try {
     if (!API || !API.viewer) throw new Error("Trimble API ikke tilgjengelig");
@@ -162,57 +162,59 @@ async function hentEgenskaper() {
     modelProperties = {};
     let objectIds = [];
 
-    // Bygg en liste over alle objekt-IDer vi vil hente egenskaper for
-    models.forEach(model => {
-        if (model.objects) {
-            model.objects.forEach(obj => {
-                // Sender med både id og runtimeId for maksimal kompatibilitet med APIet
-                objectIds.push({ modelId: model.modelId, objectId: obj.id, runtimeId: obj.runtimeId });
+    // 1. Samle inn alle objekt-ID-er på en robust måte
+    models.forEach(m => {
+        const mId = m.modelId || m.modelid || m.id; // Garderer mot ulike versjoner av API-et
+        if (m.objects && m.objects.length > 0) {
+            m.objects.forEach(obj => {
+                // Vi sender inn runtimeId, da dette er mest effektivt for Viewer API
+                objectIds.push({ modelId: mId, runtimeId: obj.runtimeId });
             });
         }
     });
 
-    // Hent alle egenskaper for de innsamlede objektene
-    const props = await API.viewer.getObjectProperties(objectIds);
-    if (!props || props.length === 0) {
-      throw new Error("Klarte ikke hente egenskaper. Listen med data var tom.");
+    if (objectIds.length === 0) {
+        throw new Error("Modellene inneholder ingen synlige objekter.");
     }
 
-    // Sorter og lagre unike verdier
-    // OPPDATERING: Nå dykker vi ned i Property Sets (pSet) for å finne de faktiske egenskapene
-    props.forEach(objProp => {
-        if (objProp.properties && Array.isArray(objProp.properties)) {
-            objProp.properties.forEach(pSet => {
-                
-                // Sjekk om dette er et Property Set (inneholder en ny liste med egenskaper)
-                if (pSet.properties && Array.isArray(pSet.properties)) {
-                    pSet.properties.forEach(p => {
-                        const propName = p.name;
-                        const propValue = p.value;
-
-                        // Ignorer tomme verdier
-                        if (propValue !== undefined && propValue !== null && propValue !== "") {
-                            if (!modelProperties[propName]) {
-                                modelProperties[propName] = new Set();
+    // 2. Del opp hentingen i "chunks" på 500 objekter for ikke å krasje nettleseren
+    const chunkSize = 500; 
+    for (let i = 0; i < objectIds.length; i += chunkSize) {
+        const chunk = objectIds.slice(i, i + chunkSize);
+        
+        // Hent data for denne porsjonen
+        const props = await API.viewer.getObjectProperties(chunk);
+        
+        if (props && props.length > 0) {
+            props.forEach(objProp => {
+                if (objProp.properties && Array.isArray(objProp.properties)) {
+                    objProp.properties.forEach(pSet => {
+                        // Sjekker om det er et property set
+                        if (pSet.properties && Array.isArray(pSet.properties)) {
+                            pSet.properties.forEach(p => {
+                                const val = p.value;
+                                if (val !== undefined && val !== null && val !== "") {
+                                    if (!modelProperties[p.name]) modelProperties[p.name] = new Set();
+                                    modelProperties[p.name].add(val);
+                                }
+                            });
+                        } else {
+                            // Fallback for flate egenskaper
+                            const val = pSet.value;
+                            if (val !== undefined && val !== null && val !== "") {
+                                if (!modelProperties[pSet.name]) modelProperties[pSet.name] = new Set();
+                                modelProperties[pSet.name].add(val);
                             }
-                            modelProperties[propName].add(propValue);
                         }
                     });
-                } else {
-                    // Fallback for flate egenskaper uten Property Set
-                    const propName = pSet.name;
-                    const propValue = pSet.value;
-
-                    if (propValue !== undefined && propValue !== null && propValue !== "") {
-                        if (!modelProperties[propName]) {
-                            modelProperties[propName] = new Set();
-                        }
-                        modelProperties[propName].add(propValue);
-                    }
                 }
             });
         }
-    });
+        
+        // Oppdater statusbaren med fremdriften
+        const progress = Math.min(i + chunkSize, objectIds.length);
+        setStatus(`⏳ Leser egenskaper: ${progress} av ${objectIds.length} objekter analysert...`);
+    }
 
     byggDropdowns();
     
