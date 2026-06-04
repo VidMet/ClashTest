@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="nb">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Kollisjonskontroll v1.0</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  
+  <script src="https://components.connect.trimble.com/trimble-connect-workspace-api/index.js"></script>
+  
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Syne:wght@400;600;700&display=swap');
+
+    :root {
+      --bg: #f3f4f6; --surface: #ffffff; --surface2: #e5e7eb; --border: #d1d5db; 
+      --ink: #111827; --muted: #6b7280; --blue: #1d4ed8; --blue-dim: #dbeafe;
+      --green: #166534; --green-dim: #dcfce7; --red: #dc2626; --red-dim: #fee2e2;
+      --mono: 'JetBrains Mono', monospace; --sans: 'Syne', sans-serif;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: var(--bg); color: var(--ink); font-family: var(--sans); height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+
+    header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 10px 16px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+    .header-info h1 { font-size: 16px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+    .header-info h1 .version { font-family: var(--mono); font-size: 11px; font-weight: normal; color: var(--muted); background: var(--bg); padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border); }
+    .header-info p { font-size: 11px; color: var(--muted); font-family: var(--mono); margin-top: 2px; }
+    
+    .toolbar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 8px 16px; display: flex; gap: 10px; align-items: center; flex-shrink: 0; flex-wrap: wrap; }
+    .toolbar select, .toolbar input, .btn { font-family: var(--sans); font-size: 12px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
+    
+    .btn { font-weight: 600; background: var(--surface2); transition: background 0.2s; border: 1px solid var(--border); }
+    .btn:hover:not(:disabled) { background: var(--border); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary { background: var(--blue); color: white; border: none; }
+    .btn-primary:hover:not(:disabled) { background: #1e40af; }
+    
+    #statusBar { font-family: var(--mono); font-size: 11px; padding: 4px 16px; background: var(--blue-dim); color: var(--blue); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+
+    main { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 16px;}
+
+    .kategori-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+    .kategori-header { background: var(--surface2); padding: 10px 14px; font-weight: 600; font-size: 13px; display: flex; justify-content: space-between; align-items: center; }
+    .kategori-body { display: flex; flex-direction: column; padding: 14px; gap: 12px;}
+
+    /* Spesifikke stiler for kollisjonskontroll */
+    .selection-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .selection-box { border: 1px solid var(--border); border-radius: 4px; padding: 12px; background: var(--bg); }
+    .selection-box h3 { font-size: 12px; margin-bottom: 8px; color: var(--blue); font-family: var(--mono); text-transform: uppercase; }
+    .form-group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+    .form-group label { font-size: 11px; font-weight: 600; }
+    .form-group select { padding: 6px; border: 1px solid var(--border); border-radius: 4px; font-family: var(--sans); }
+
+    .result-list { display: flex; flex-direction: column; gap: 8px; }
+    .result-item { background: var(--surface); border: 1px solid var(--red); border-left: 4px solid var(--red); padding: 10px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center;}
+    .result-item-info { font-size: 12px; }
+    .result-item-info span { font-family: var(--mono); font-size: 10px; color: var(--muted); display: block; margin-top: 2px;}
+
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="header-info">
+    <h1>Kollisjonskontroll <span class="version">v1.0</span></h1>
+    <p>Avansert kontroll via ekstern prosessering</p>
+  </div>
+  <div style="display: flex; align-items: center; gap: 10px;">
+    <button class="btn btn-primary" id="runClashBtn" disabled>🚀 Kjør Kollisjonskontroll</button>
+  </div>
+</header>
+
+<div class="toolbar">
+  <button class="btn" id="loadPropsBtn" onclick="hentEgenskaper()">🔍 Skann modell for egenskaper</button>
+  <div style="border-left: 1px solid var(--border); height: 24px; margin: 0 5px;"></div>
+  <span style="font-size: 11px; font-family: var(--mono); color: var(--muted);">Backend-status: <span style="color: var(--red);">Frakoblet</span></span>
+</div>
+
+<div id="statusBar">Venter på tilkobling til Trimble Connect...</div>
+
+<main>
+  
+  <div class="kategori-panel">
+    <div class="kategori-header">
+      <span>1. Definer objekter som skal sjekkes (F.eks basert på 'Objekttype')</span>
+    </div>
+    <div class="kategori-body">
+      <div class="selection-grid">
+        
+        <div class="selection-box">
+          <h3>Sett A (Søkeobjekter)</h3>
+          <div class="form-group">
+            <label>Velg egenskap å filtrere på:</label>
+            <select id="propKeyA" disabled><option>Laster egenskaper...</option></select>
+          </div>
+          <div class="form-group">
+            <label>Velg verdi:</label>
+            <select id="propValA" disabled><option>Venter på egenskap...</option></select>
+          </div>
+        </div>
+
+        <div class="selection-box">
+          <h3>Sett B (Hinder/Kollisjonsobjekter)</h3>
+          <div class="form-group">
+            <label>Velg egenskap å filtrere på:</label>
+            <select id="propKeyB" disabled><option>Laster egenskaper...</option></select>
+          </div>
+          <div class="form-group">
+            <label>Velg verdi:</label>
+            <select id="propValB" disabled><option>Venter på egenskap...</option></select>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <div class="kategori-panel">
+    <div class="kategori-header">
+      <span>2. Resultater</span>
+      <span style="font-family:var(--mono); color:var(--muted); font-size:11px;" id="resultCount">0 kollisjoner funnet</span>
+    </div>
+    <div class="kategori-body" id="resultContainer" style="background: var(--bg);">
+      <div style="text-align: center; color: var(--muted); font-size: 12px; padding: 20px;">
+        Kjør en kontroll for å se resultater her.
+      </div>
+      
+      </div>
+  </div>
+
+</main>
+
+<script>
+let API = null;
+
+const $ = id => document.getElementById(id);
+const setStatus = m => { $('statusBar').textContent = m; };
+
+async function init() {
+  try {
+    API = await window.TrimbleConnectWorkspace.connect(window.parent);
+    setStatus('✅ Tilkoblet Trimble Connect Workspace API');
+  } catch(e) {
+    setStatus('⚠️ Kjører frittstående (Utenfor Trimble 3D-visning) - Kun UI-testing');
+  }
+}
+
+// Dummy-funksjon for å simulere skanning av modellen i neste steg
+function hentEgenskaper() {
+    setStatus('⏳ Skanner modell for egenskapsdata...');
+    setTimeout(() => {
+        setStatus('✅ Egenskaper lastet. Klar til å definere regelsett.');
+    }, 1500);
+}
+
+// Start API når siden lastes
+init();
+</script>
+</body>
+</html>
