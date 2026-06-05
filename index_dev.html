@@ -2,7 +2,7 @@
 <html lang="nb">
 <head>
   <meta charset="UTF-8"/>
-  <title>Kollisjonskontroll v1.0 Beta f</title>
+  <title>Kollisjonskontroll v1.0 Beta g</title>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   
   <script src="https://components.connect.trimble.com/trimble-connect-workspace-api/index.js"></script>
@@ -61,7 +61,7 @@
 
 <header>
   <div class="header-info">
-    <h1>Kollisjonskontroll <span class="version">v1.0 Beta f</span></h1>
+    <h1>Kollisjonskontroll <span class="version">v1.0 Beta g</span></h1>
     <p>Avansert kontroll via ekstern prosessering</p>
   </div>
   <div style="display: flex; align-items: center; gap: 10px;">
@@ -153,73 +153,73 @@ async function hentEgenskaper() {
   try {
     if (!API || !API.viewer) throw new Error("Trimble API ikke tilgjengelig");
 
-    // Hent alle objekter som er lastet inn i 3D-visningen
+    // Hent alle objekter
     const models = await API.viewer.getObjects();
     if (!models || models.length === 0) {
       throw new Error("Fant ingen objekter i 3D-visningen.");
     }
 
     modelProperties = {};
-    let objectIds = [];
+    let totalObjects = 0;
+    let objectsScanned = 0;
 
-    // 1. Samle inn alle objekt-ID-er på riktig måte
+    // Tell opp totalt antall objekter for en nøyaktig statusbar
     models.forEach(m => {
-        const mId = m.modelId || m.modelid || m.id;
-        if (m.objects && m.objects.length > 0) {
-            m.objects.forEach(obj => {
-                // RETTELSE: Vi MÅ bruke objectId (GUID) for å hente egenskaper, ikke runtimeId
-                objectIds.push({ modelId: mId, objectId: obj.id || obj.objectId });
-            });
-        }
+        if (m.objects) totalObjects += m.objects.length;
     });
 
-    if (objectIds.length === 0) {
-        throw new Error("Modellene inneholder ingen synlige objekter.");
-    }
+    const CHUNK = 200; // Vi bruker 200, akkurat som i Mengdeuttak-skriptet ditt
 
-    // 2. Del opp hentingen i "chunks" på 500 objekter for stabilitet
-    const chunkSize = 500; 
-    for (let i = 0; i < objectIds.length; i += chunkSize) {
-        const chunk = objectIds.slice(i, i + chunkSize);
+    // Hoved-loop: Gå gjennom én og én modell (Gullet fra din kode!)
+    for (const model of models) {
+        const mid = model.modelId || model.modelid;
         
-        try {
-            // Hent data for denne porsjonen
-            const props = await API.viewer.getObjectProperties(chunk);
+        // Hent ut rene ID-strenger
+        const objectIds = (model.objects || []).map(o => o.id || o.objectRuntimeId).filter(id => id != null);
+        
+        // Del opp i bolker per modell
+        for (let i = 0; i < objectIds.length; i += CHUNK) {
+            const chunk = objectIds.slice(i, i + CHUNK);
             
-            // REKURSIV SØKEFUNKSJON: Graver uansett struktur
-            function gravEtterEgenskaper(node) {
-                if (!node || typeof node !== 'object') return;
+            try {
+                // Den magiske linjen: Sender mid og chunk separat!
+                const propsArr = await API.viewer.getObjectProperties(mid, chunk);
                 
-                if (node.hasOwnProperty('name') && node.hasOwnProperty('value')) {
-                    const val = node.value;
-                    if (val !== undefined && val !== null && val !== "") {
-                        const valStr = String(val);
-                        if (!modelProperties[node.name]) {
-                            modelProperties[node.name] = new Set();
+                // REKURSIV SØKEFUNKSJON: Finner alt, uansett struktur
+                function gravEtterEgenskaper(node) {
+                    if (!node || typeof node !== 'object') return;
+                    
+                    if (node.hasOwnProperty('name') && node.hasOwnProperty('value')) {
+                        const val = node.value;
+                        if (val !== undefined && val !== null && val !== "") {
+                            const valStr = String(val);
+                            if (!modelProperties[node.name]) {
+                                modelProperties[node.name] = new Set();
+                            }
+                            modelProperties[node.name].add(valStr);
                         }
-                        modelProperties[node.name].add(valStr);
+                    }
+                    
+                    for (let key in node) {
+                        if (typeof node[key] === 'object') {
+                            gravEtterEgenskaper(node[key]);
+                        }
                     }
                 }
                 
-                for (let key in node) {
-                    if (typeof node[key] === 'object') {
-                        gravEtterEgenskaper(node[key]);
-                    }
+                if (propsArr && propsArr.length > 0) {
+                    propsArr.forEach(objProp => {
+                        gravEtterEgenskaper(objProp);
+                    });
                 }
+            } catch (chunkError) {
+                console.warn(`⚠️ Hoppet over en bolk i modell ${mid} på grunn av Trimble-feil.`);
             }
             
-            if (props && props.length > 0) {
-                props.forEach(objProp => {
-                    gravEtterEgenskaper(objProp);
-                });
-            }
-        } catch (chunkError) {
-            console.warn(`⚠️ Hoppet over bolk ${i} til ${i + chunkSize} på grunn av serverfeil fra Trimble.`);
+            // Oppdater statusbaren
+            objectsScanned += chunk.length;
+            setStatus(`⏳ Leser egenskaper: ${objectsScanned} av ${totalObjects} objekter analysert...`);
         }
-        
-        // Oppdater statusbaren
-        const progress = Math.min(i + chunkSize, objectIds.length);
-        setStatus(`⏳ Leser egenskaper: ${progress} av ${objectIds.length} objekter analysert...`);
     }
 
     byggDropdowns();
@@ -230,7 +230,7 @@ async function hentEgenskaper() {
     if (funnetAntall > 0) {
         setStatus(`✅ Skann ferdig. Fant ${funnetAntall} unike egenskapsnavn.`);
     } else {
-        setStatus('⚠️ Skann ferdig, men fant ingen egenskaper (Sjekk F12/Konsoll for å se rådata).');
+        setStatus('⚠️ Skann ferdig, men fant ingen egenskaper.');
     }
 
   } catch (e) {
