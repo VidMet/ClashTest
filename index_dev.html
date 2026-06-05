@@ -2,7 +2,7 @@
 <html lang="nb">
 <head>
   <meta charset="UTF-8"/>
-  <title>Kollisjonskontroll v1.0 Beta e</title>
+  <title>Kollisjonskontroll v1.0 Beta f</title>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   
   <script src="https://components.connect.trimble.com/trimble-connect-workspace-api/index.js"></script>
@@ -61,7 +61,7 @@
 
 <header>
   <div class="header-info">
-    <h1>Kollisjonskontroll <span class="version">v1.0 Beta e</span></h1>
+    <h1>Kollisjonskontroll <span class="version">v1.0 Beta f</span></h1>
     <p>Avansert kontroll via ekstern prosessering</p>
   </div>
   <div style="display: flex; align-items: center; gap: 10px;">
@@ -162,12 +162,13 @@ async function hentEgenskaper() {
     modelProperties = {};
     let objectIds = [];
 
-    // 1. Samle inn alle objekt-ID-er
+    // 1. Samle inn alle objekt-ID-er på riktig måte
     models.forEach(m => {
         const mId = m.modelId || m.modelid || m.id;
         if (m.objects && m.objects.length > 0) {
             m.objects.forEach(obj => {
-                objectIds.push({ modelId: mId, runtimeId: obj.runtimeId });
+                // RETTELSE: Vi MÅ bruke objectId (GUID) for å hente egenskaper, ikke runtimeId
+                objectIds.push({ modelId: mId, objectId: obj.id || obj.objectId });
             });
         }
     });
@@ -176,7 +177,7 @@ async function hentEgenskaper() {
         throw new Error("Modellene inneholder ingen synlige objekter.");
     }
 
-    // 2. Del opp hentingen i "chunks" på 500 objekter
+    // 2. Del opp hentingen i "chunks" på 500 objekter for stabilitet
     const chunkSize = 500; 
     for (let i = 0; i < objectIds.length; i += chunkSize) {
         const chunk = objectIds.slice(i, i + chunkSize);
@@ -185,7 +186,7 @@ async function hentEgenskaper() {
             // Hent data for denne porsjonen
             const props = await API.viewer.getObjectProperties(chunk);
             
-            // REKURSIV SØKEFUNKSJON
+            // REKURSIV SØKEFUNKSJON: Graver uansett struktur
             function gravEtterEgenskaper(node) {
                 if (!node || typeof node !== 'object') return;
                 
@@ -213,8 +214,7 @@ async function hentEgenskaper() {
                 });
             }
         } catch (chunkError) {
-            // Her fanger vi opp 404-feilene! Skriptet krasjer ikke, men logger feilen og går videre til neste bolk.
-            console.warn(`⚠️ Hoppet over bolk ${i} til ${i + chunkSize} på grunn av serverfeil fra Trimble (sannsynligvis alignment-objekter).`);
+            console.warn(`⚠️ Hoppet over bolk ${i} til ${i + chunkSize} på grunn av serverfeil fra Trimble.`);
         }
         
         // Oppdater statusbaren
