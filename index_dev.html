@@ -2,7 +2,7 @@
 <html lang="nb">
 <head>
   <meta charset="UTF-8"/>
-  <title>Kollisjonskontroll v1.0 Beta g</title>
+  <title>Kollisjonskontroll v1.0</title>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   
   <script src="https://components.connect.trimble.com/trimble-connect-workspace-api/index.js"></script>
@@ -42,7 +42,6 @@
     .kategori-header { background: var(--surface2); padding: 10px 14px; font-weight: 600; font-size: 13px; display: flex; justify-content: space-between; align-items: center; }
     .kategori-body { display: flex; flex-direction: column; padding: 14px; gap: 12px;}
 
-    /* Spesifikke stiler for kollisjonskontroll */
     .selection-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     .selection-box { border: 1px solid var(--border); border-radius: 4px; padding: 12px; background: var(--bg); }
     .selection-box h3 { font-size: 12px; margin-bottom: 8px; color: var(--blue); font-family: var(--mono); text-transform: uppercase; }
@@ -54,14 +53,13 @@
     .result-item { background: var(--surface); border: 1px solid var(--red); border-left: 4px solid var(--red); padding: 10px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center;}
     .result-item-info { font-size: 12px; }
     .result-item-info span { font-family: var(--mono); font-size: 10px; color: var(--muted); display: block; margin-top: 2px;}
-
   </style>
 </head>
 <body>
 
 <header>
   <div class="header-info">
-    <h1>Kollisjonskontroll <span class="version">v1.0 Beta g</span></h1>
+    <h1>Kollisjonskontroll <span class="version">v1.0</span></h1>
     <p>Avansert kontroll via ekstern prosessering</p>
   </div>
   <div style="display: flex; align-items: center; gap: 10px;">
@@ -72,7 +70,7 @@
 <div class="toolbar">
   <button class="btn" id="loadPropsBtn" onclick="hentEgenskaper()">🔍 Skann modell for egenskaper</button>
   <div style="border-left: 1px solid var(--border); height: 24px; margin: 0 5px;"></div>
-  <span style="font-size: 11px; font-family: var(--mono); color: var(--muted);">Backend-status: <span style="color: var(--red);">Frakoblet</span></span>
+  <span style="font-size: 11px; font-family: var(--mono); color: var(--muted);">Backend-status: <span style="color: var(--blue);" id="backendStatus">Venter på kjøring</span></span>
 </div>
 
 <div id="statusBar">Venter på tilkobling til Trimble Connect...</div>
@@ -81,7 +79,7 @@
   
   <div class="kategori-panel">
     <div class="kategori-header">
-      <span>1. Definer objekter som skal sjekkes (F.eks basert på 'Objekttype')</span>
+      <span>1. Definer objekter som skal sjekkes</span>
     </div>
     <div class="kategori-body">
       <div class="selection-grid">
@@ -123,15 +121,15 @@
       <div style="text-align: center; color: var(--muted); font-size: 12px; padding: 20px;">
         Kjør en kontroll for å se resultater her.
       </div>
-      
-      </div>
+    </div>
   </div>
 
 </main>
 
 <script>
 let API = null;
-let modelProperties = {}; // Her lagrer vi egenskapene vi finner
+let modelProperties = {}; 
+let objectCache = []; // Her lagres egenskapene per spesifikke 3D-objekt
 
 const $ = id => document.getElementById(id);
 const setStatus = m => { $('statusBar').textContent = m; };
@@ -153,70 +151,72 @@ async function hentEgenskaper() {
   try {
     if (!API || !API.viewer) throw new Error("Trimble API ikke tilgjengelig");
 
-    // Hent alle objekter
     const models = await API.viewer.getObjects();
-    if (!models || models.length === 0) {
-      throw new Error("Fant ingen objekter i 3D-visningen.");
-    }
+    if (!models || models.length === 0) throw new Error("Fant ingen objekter i 3D-visningen.");
 
     modelProperties = {};
+    objectCache = []; // Nullstill cachen ved nytt skann
     let totalObjects = 0;
     let objectsScanned = 0;
 
-    // Tell opp totalt antall objekter for en nøyaktig statusbar
     models.forEach(m => {
         if (m.objects) totalObjects += m.objects.length;
     });
 
-    const CHUNK = 200; // Vi bruker 200, akkurat som i Mengdeuttak-skriptet ditt
+    const CHUNK = 200; 
 
-    // Hoved-loop: Gå gjennom én og én modell (Gullet fra din kode!)
     for (const model of models) {
         const mid = model.modelId || model.modelid;
-        
-        // Hent ut rene ID-strenger
         const objectIds = (model.objects || []).map(o => o.id || o.objectRuntimeId).filter(id => id != null);
         
-        // Del opp i bolker per modell
         for (let i = 0; i < objectIds.length; i += CHUNK) {
             const chunk = objectIds.slice(i, i + CHUNK);
             
             try {
-                // Den magiske linjen: Sender mid og chunk separat!
                 const propsArr = await API.viewer.getObjectProperties(mid, chunk);
-                
-                // REKURSIV SØKEFUNKSJON: Finner alt, uansett struktur
-                function gravEtterEgenskaper(node) {
-                    if (!node || typeof node !== 'object') return;
-                    
-                    if (node.hasOwnProperty('name') && node.hasOwnProperty('value')) {
-                        const val = node.value;
-                        if (val !== undefined && val !== null && val !== "") {
-                            const valStr = String(val);
-                            if (!modelProperties[node.name]) {
-                                modelProperties[node.name] = new Set();
-                            }
-                            modelProperties[node.name].add(valStr);
-                        }
-                    }
-                    
-                    for (let key in node) {
-                        if (typeof node[key] === 'object') {
-                            gravEtterEgenskaper(node[key]);
-                        }
-                    }
-                }
                 
                 if (propsArr && propsArr.length > 0) {
                     propsArr.forEach(objProp => {
+                        let cachedObj = { 
+                            modelId: mid, 
+                            objectId: objProp.id || objProp.objectId, 
+                            egenskaper: {} 
+                        };
+
+                        function gravEtterEgenskaper(node) {
+                            if (!node || typeof node !== 'object') return;
+                            
+                            if (node.hasOwnProperty('name') && node.hasOwnProperty('value')) {
+                                const val = node.value;
+                                if (val !== undefined && val !== null && val !== "") {
+                                    const valStr = String(val);
+                                    
+                                    // Bygger den globale listen for nedtrekksmenyene
+                                    if (!modelProperties[node.name]) {
+                                        modelProperties[node.name] = new Set();
+                                    }
+                                    modelProperties[node.name].add(valStr);
+
+                                    // Knytter egenskapen til dette spesifikke objektet i cachen
+                                    cachedObj.egenskaper[node.name] = valStr;
+                                }
+                            }
+                            
+                            for (let key in node) {
+                                if (typeof node[key] === 'object') {
+                                    gravEtterEgenskaper(node[key]);
+                                }
+                            }
+                        }
+                        
                         gravEtterEgenskaper(objProp);
+                        objectCache.push(cachedObj);
                     });
                 }
             } catch (chunkError) {
                 console.warn(`⚠️ Hoppet over en bolk i modell ${mid} på grunn av Trimble-feil.`);
             }
             
-            // Oppdater statusbaren
             objectsScanned += chunk.length;
             setStatus(`⏳ Leser egenskaper: ${objectsScanned} av ${totalObjects} objekter analysert...`);
         }
@@ -253,7 +253,7 @@ function byggDropdowns() {
   keyA.disabled = false;
   keyB.disabled = false;
 
-  // Prioriter Objekttype automatisk da denne ofte er nøkkelen for filtrering
+  // Setter Objekttype som standard hvis den finnes
   if (keys.includes('Objekttype')) {
       keyA.value = 'Objekttype';
       keyB.value = 'Objekttype';
@@ -262,7 +262,6 @@ function byggDropdowns() {
   oppdaterVerdiDropdown('A');
   oppdaterVerdiDropdown('B');
 
-  // Legg til lyttere slik at verdi-menyen oppdateres når du bytter egenskap
   keyA.onchange = () => oppdaterVerdiDropdown('A');
   keyB.onchange = () => oppdaterVerdiDropdown('B');
 }
@@ -275,25 +274,74 @@ function oppdaterVerdiDropdown(sett) {
   if (!valgtKey) {
     valSelect.innerHTML = '<option value="">-- Vent på egenskap --</option>';
     valSelect.disabled = true;
+    sjekkKlarForKollisjon();
     return;
   }
 
-  // Konverter Set til Array, sorter alfabetisk, og bygg options
   const values = Array.from(modelProperties[valgtKey]).sort();
   valSelect.innerHTML = '<option value="">-- Velg verdi --</option>' + values.map(v => `<option value="${v}">${v}</option>`).join('');
   valSelect.disabled = false;
   
+  valSelect.onchange = sjekkKlarForKollisjon;
   sjekkKlarForKollisjon();
 }
 
 function sjekkKlarForKollisjon() {
-    // Aktiver "Kjør Kollisjonskontroll"-knappen kun hvis alle fire felter er valgt
     const valgtA = $('propValA').value;
     const valgtB = $('propValB').value;
     $('runClashBtn').disabled = !(valgtA && valgtB);
 }
 
-// Start API når siden lastes
+// Koble funksjonalitet til Kjør-knappen
+$('runClashBtn').onclick = async () => {
+    const keyA = $('propKeyA').value;
+    const valA = $('propValA').value;
+    const keyB = $('propKeyB').value;
+    const valB = $('propValB').value;
+
+    setStatus('⏳ Analyserer utvalg...');
+    $('backendStatus').textContent = "Kjører analyse...";
+    $('backendStatus').style.color = "var(--ink)";
+
+    const settA_guids = objectCache.filter(o => o.egenskaper[keyA] === valA).map(o => o.objectId);
+    const settB_guids = objectCache.filter(o => o.egenskaper[keyB] === valB).map(o => o.objectId);
+
+    if (settA_guids.length === 0 || settB_guids.length === 0) {
+        setStatus('⚠️ Ett av settene er tomt. Velg noe som faktisk finnes i modellen.');
+        $('backendStatus').textContent = "Avbrutt";
+        return;
+    }
+
+    setStatus(`⏳ Sender ${settA_guids.length} (Sett A) mot ${settB_guids.length} (Sett B) objekter til Python-motoren...`);
+
+    try {
+        const response = await fetch('http://127.0.0.1:8000/sjekk_kollisjon', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                modell_navn: "Aktiv modell i Trimble",
+                sett_a_guids: settA_guids,
+                sett_b_guids: settB_guids
+            })
+        });
+
+        if (!response.ok) throw new Error("Python-server svarte ikke med OK");
+        
+        const data = await response.json();
+        
+        setStatus(`✅ Motor returnerte ${data.antall_kollisjoner} simulert(e) kollisjon(er).`);
+        $('backendStatus').textContent = "Suksess";
+        $('backendStatus').style.color = "var(--green)";
+        console.log("Svar fra Python:", data);
+
+    } catch (err) {
+        console.error(err);
+        setStatus(`❌ Feil ved kontakt med Python-motor. Kjører FastAPI-serveren din?`);
+        $('backendStatus').textContent = "Frakoblet";
+        $('backendStatus').style.color = "var(--red)";
+    }
+};
+
 init();
 </script>
 </body>
